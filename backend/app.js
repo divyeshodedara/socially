@@ -18,13 +18,6 @@ const app = express();
 // Trust proxy to get correct client IP
 app.set("trust proxy", true);
 
-// app.use(
-//   cors({
-//     origin: "http://localhost:5173",
-//     credentials: true,
-//   }),
-// );
-
 app.get("/check", (req, res, next) => {
   res.status(200).json({ message: "OK" });
 });
