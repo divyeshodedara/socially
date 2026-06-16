@@ -29,12 +29,6 @@ app.get("/check", (req, res, next) => {
   res.status(200).json({ message: "OK" });
 });
 
-// app.use((req, res, next) => {
-//   if (req.headers["x-internal-secret"] !== process.env.INTERNAL_SECRET) {
-//     return res.status(403).end();
-//   }
-//   next();
-// });
 
 // app.use(
 //   cors({
