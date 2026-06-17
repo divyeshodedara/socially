@@ -17,7 +17,7 @@ const postSchema = new mongoose.Schema(
         type: String,
         required: true,
       },
-      public_id: {
+      key: {
         type: String,
         required: true,
       },

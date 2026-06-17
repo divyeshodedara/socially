@@ -1,7 +1,6 @@
 import AppError from "../utils/appError.js";
 import catchAsync from "../utils/catchAsync.js";
 import sharp from "sharp";
-import { cloudinary, uploadToCloudinary } from "../utils/cloudinary.js";
 import Post from "../models/post.model.js";
 import User from "../models/user.model.js";
 import mongoose from "mongoose";
@@ -15,6 +14,7 @@ import {
   sendPostDeletedToUser,
 } from "../utils/socket.js";
 import redis from "../utils/redis.js";
+import { uploadToS3,deleteFromS3 } from "../utils/s3.js";
 
 const createPost = catchAsync(async (req, res, next) => {
   const { caption } = req.body;
@@ -24,29 +24,25 @@ const createPost = catchAsync(async (req, res, next) => {
   if (!image) throw new AppError("Image is required for the post", 400);
 
   const optimizedImageBuffer = await sharp(image.buffer)
-    .resize({
-      height: 800,
-      width: 800,
-      fit: "inside",
-    })
+    .resize({ height: 800, width: 800, fit: "inside" })
     .toFormat("jpeg", { quality: 80 })
     .toBuffer();
 
-  const fileUrl = `data:image/jpeg;base64,${optimizedImageBuffer.toString("base64")}`;
+  const file = {
+    buffer: optimizedImageBuffer,
+    originalname: "post.jpeg",
+    mimetype: "image/jpeg",
+  };
 
-  const cloudResponse = await uploadToCloudinary(fileUrl);
+  const { url, key } = await uploadToS3(file, "posts");
 
   let post = await Post.create({
     caption,
-    image: {
-      url: cloudResponse.secure_url,
-      public_id: cloudResponse.public_id,
-    },
+    image: { url, key },
     user: userId,
   });
 
   const user = await User.findById(userId);
-
   if (user) {
     user.posts.push(post.id);
     await user.save({ validateBeforeSave: false });
@@ -57,13 +53,9 @@ const createPost = catchAsync(async (req, res, next) => {
     select: "username email bio profilePicture",
   });
 
-  // Emit new post to the creator and all followers via Socket.IO
   const creator = await User.findById(userId).select("followers");
-
-  // Send to the creator themselves first
   sendNewPostToUser(userId.toString(), post);
 
-  // Send to all followers
   if (creator && creator.followers && creator.followers.length > 0) {
     creator.followers.forEach((followerId) => {
       sendNewPostToUser(followerId.toString(), post);
@@ -188,8 +180,8 @@ const deletePost = catchAsync(async (req, res, next) => {
 
   await Comment.deleteMany({ post: postId });
 
-  if (post.image && post.image.public_id) {
-    await cloudinary.uploader.destroy(post.image.public_id);
+  if (post.image && post.image.key) {
+    await deleteFromS3(post.image.key); // key now stores the S3 key
   }
 
   await Post.findByIdAndDelete(postId);

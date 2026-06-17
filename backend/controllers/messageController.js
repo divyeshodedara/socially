@@ -3,14 +3,16 @@ import Message from "../models/messageModel.js";
 import Conversation from "../models/conversationModel.js";
 import catchAsync from "../utils/catchAsync.js";
 import AppError from "../utils/appError.js";
-import { uploadToCloudinary } from "../utils/cloudinary.js";
 import { sendMessageToUser } from "../utils/socket.js";
+import { uploadToS3 } from "../utils/s3.js";
 
 // Send a new message
+
 export const sendMessage = catchAsync(async (req, res, next) => {
   const { receiverId, message } = req.body;
   const senderId = req.user._id;
   const image = req.file;
+
   if (!receiverId) {
     return next(new AppError("Receiver ID is required", 400));
   }
@@ -21,27 +23,23 @@ export const sendMessage = catchAsync(async (req, res, next) => {
 
   let imageData = null;
 
-  // Handle image upload if present
   if (image) {
     const optimizedImageBuffer = await sharp(image.buffer)
-      .resize({
-        height: 800,
-        width: 800,
-        fit: "inside",
-      })
+      .resize({ height: 800, width: 800, fit: "inside" })
       .toFormat("jpeg", { quality: 80 })
       .toBuffer();
 
-    const fileUrl = `data:image/jpeg;base64,${optimizedImageBuffer.toString("base64")}`;
-
-    const cloudResponse = await uploadToCloudinary(fileUrl);
-    imageData = {
-      url: cloudResponse.secure_url,
-      public_id: cloudResponse.public_id,
+    // Create a mock file object for uploadToS3
+    const file = {
+      buffer: optimizedImageBuffer,
+      originalname: "message.jpeg",
+      mimetype: "image/jpeg",
     };
+
+    const { url, key } = await uploadToS3(file, "messages");
+    imageData = { url, key };
   }
 
-  // Create message
   let newMessage = await Message.create({
     sender: senderId,
     receiver: receiverId,
@@ -49,13 +47,11 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     image: imageData,
   });
 
-  // Populate sender details
   newMessage = await newMessage.populate({
     path: "sender",
     select: "username profilePicture",
   });
 
-  // Find or create conversation
   let conversation = await Conversation.findOne({
     participants: { $all: [senderId, receiverId] },
   });
@@ -70,7 +66,6 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     await conversation.save();
   }
 
-  // Send message via socket to receiver
   sendMessageToUser(receiverId, {
     type: "newMessage",
     message: newMessage,
@@ -78,9 +73,7 @@ export const sendMessage = catchAsync(async (req, res, next) => {
 
   res.status(201).json({
     status: "success",
-    data: {
-      message: newMessage,
-    },
+    data: { message: newMessage },
   });
 });
 

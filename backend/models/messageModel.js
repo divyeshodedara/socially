@@ -18,7 +18,7 @@ const messageSchema = new mongoose.Schema(
     },
     image: {
       url: String,
-      public_id: String,
+      key: String,
     },
     seen: {
       type: Boolean,

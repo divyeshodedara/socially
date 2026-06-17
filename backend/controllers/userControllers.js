@@ -2,9 +2,9 @@ import AppError from "../utils/appError.js";
 import User from "../models/user.model.js";
 import catchAsync from "../utils/catchAsync.js";
 import getDataUri from "../utils/dataUri.js";
-import { uploadToCloudinary } from "../utils/cloudinary.js";
 import { createNotification } from "./notificationController.js";
 import redis from "../utils/redis.js";
+import { uploadToS3, deleteFromS3 } from "../utils/s3.js";
 
 const getProfile = catchAsync(async (req, res, next) => {
   const userId = req.params.id;
@@ -36,23 +36,38 @@ const editProfile = catchAsync(async (req, res, next) => {
   const { bio } = req.body;
   const profilePicture = req.file;
 
-  let cloudResponse;
+  const user = await User.findById(userId).select("-password");
+  if (!user) throw new AppError("User not found", 404);
 
   if (profilePicture) {
-    const fileUrl = getDataUri(profilePicture);
-    cloudResponse = await uploadToCloudinary(fileUrl);
+    const optimizedImageBuffer = await sharp(profilePicture.buffer)
+      .resize({ height: 400, width: 400, fit: "cover" })
+      .toFormat("jpeg", { quality: 80 })
+      .toBuffer();
+
+    const file = {
+      buffer: optimizedImageBuffer,
+      originalname: "avatar.jpeg",
+      mimetype: "image/jpeg",
+    };
+
+    // Delete old profile picture from S3 if it exists and is not the default
+    if (user.profilePicture && user.profilePicture.includes("amazonaws.com")) {
+      const oldKey = user.profilePicture.replace(
+        `${process.env.S3_PUBLIC_URL}/`,
+        ""
+      );
+      await deleteFromS3(oldKey).catch(() => {}); // don't fail if delete fails
+    }
+
+    const { url } = await uploadToS3(file, "avatars");
+    user.profilePicture = url;
   }
 
-  const user = await User.findById(userId).select("-password");
-
-  if (!user) throw new AppError("user does not found", 404);
-
   if (bio) user.bio = bio;
-  if (profilePicture) user.profilePicture = cloudResponse.secure_url;
 
   await user.save({ validateBeforeSave: false });
-
-  await redis.del(`user:${userId}`); // Invalidate cache after profile update
+  await redis.del(`user:${userId}`);
 
   res.status(200).json({
     message: "profile updated",
@@ -60,7 +75,6 @@ const editProfile = catchAsync(async (req, res, next) => {
     data: { user },
   });
 });
-
 const suggestedUser = catchAsync(async (req, res, next) => {
   const userId = req.user._id;
   const currentUser = await User.findById(userId).select("following");
