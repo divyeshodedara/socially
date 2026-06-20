@@ -25,7 +25,7 @@ Socially follows a **decoupled full-stack architecture**: a React SPA on the fro
 │                              │                                  │
 │              Socket.IO Server (same HTTP server)                │
 │                              │                                  │
-│      Redis (caching + OTP)   │   Cloudinary (media storage)     │
+│      Redis (caching + OTP)   │   AWS S3 (media storage)         │
 │                              │                                  │
 │                         MongoDB Atlas                           │
 └─────────────────────────────────────────────────────────────────┘
@@ -60,8 +60,8 @@ Socially follows a **decoupled full-stack architecture**: a React SPA on the fro
 | Redis (ioredis)        | OTP storage, session caching, feed caching |
 | JWT + bcryptjs         | Authentication & password hashing          |
 | Multer + Sharp         | File upload & image optimization           |
-| Cloudinary             | Cloud image storage & delivery             |
-| Nodemailer + EJS       | Transactional email with HTML templates    |
+| AWS S3                 | Cloud image storage & delivery             |
+| Brevo + EJS            | Transactional email with HTML templates    |
 | Helmet                 | HTTP security headers                      |
 | express-rate-limit     | API rate limiting                          |
 | express-mongo-sanitize | NoSQL injection protection                 |
@@ -101,9 +101,9 @@ socially/
 │   │   └── rateLimiter.js        # Per-route rate limiters
 │   ├── utils/
 │   │   ├── socket.js              # Socket.IO init & event emitters
-│   │   ├── cloudinary.js          # Cloudinary upload helper
+│   │   ├── s3.js                  # AWS S3 upload helper
 │   │   ├── redis.js               # ioredis client
-│   │   ├── email.js               # Nodemailer + EJS template sender
+│   │   ├── email.js               # Brevo + EJS template sender
 │   │   ├── generateOtp.js         # Crypto-based OTP generator
 │   │   ├── appError.js            # Operational error class
 │   │   ├── catchAsync.js          # Async error wrapper
@@ -151,7 +151,7 @@ POST /auth/signup
   ├── Check for duplicate email/username
   ├── Create user (isVerified: false)
   ├── Generate OTP → store in Redis (TTL: 10 min)
-  └── Send OTP email via Nodemailer
+  └── Send OTP email via Brevo
 
         │
         ▼
@@ -274,16 +274,16 @@ multer (memoryStorage) → file in req.file.buffer
 sharp → resize to 800×800 (fit: inside) → JPEG quality 80
       │
       ▼
-Convert buffer → base64 data URI
+Convert buffer → base64 data URI (skipped for S3, direct buffer upload)
       │
       ▼
-cloudinary.uploader.upload() → stored in /social_media_app folder
+uploadToS3() → stored in S3 bucket under posts/
       │
       ▼
-Store { secure_url, public_id } in MongoDB document
+Store { secure_url, key } in MongoDB document
 ```
 
-On deletion, `cloudinary.uploader.destroy(public_id)` is called to clean up storage.
+On deletion, `deleteFromS3(key)` is called to clean up storage.
 
 ---
 

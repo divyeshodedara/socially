@@ -22,14 +22,6 @@ app.get("/check", (req, res, next) => {
   res.status(200).json({ message: "OK" });
 });
 
-
-// app.use(
-//   cors({
-//     origin: process.env.FRONTEND_URL,
-//     credentials: true,
-//   }),
-// );
-
 app.use(
   cors({
     origin: [process.env.FRONTEND_URL, "http://localhost:5173"],

@@ -19,4 +19,4 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
 
           script: |
-            bash /home/ubuntu/deploy.sh
+            bash /home/ubuntu/bazaar_deploy.sh

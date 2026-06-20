@@ -30,7 +30,7 @@
 
 **Posts**
 
-- Create posts with image upload (optimized via Sharp → Cloudinary)
+- Create posts with image upload (optimized via Sharp → AWS S3)
 - Infinite-scroll feed
 - Like / unlike posts (with optimistic UI)
 - Comment on posts
@@ -77,8 +77,8 @@
 | **Cache / OTP**  | Redis (ioredis)                                    |
 | **Auth**         | JWT + bcryptjs                                     |
 | **Real-time**    | Socket.IO                                          |
-| **File Uploads** | Multer + Sharp + Cloudinary                        |
-| **Email**        | Nodemailer + EJS templates                         |
+| **File Uploads** | Multer + Sharp + AWS S3                            |
+| **Email**        | Brevo + EJS templates                              |
 | **Security**     | Helmet, express-mongo-sanitize, express-rate-limit |
 
 ---
@@ -90,8 +90,8 @@
 - Node.js 18+
 - MongoDB (local or [Atlas](https://www.mongodb.com/atlas))
 - Redis (local or [Upstash](https://upstash.com))
-- [Cloudinary](https://cloudinary.com) account
-- Gmail app password (or any SMTP credentials)
+- [AWS S3](https://aws.amazon.com/s3/) account
+- Brevo API key
 
 ### 1. Clone the repository
 
@@ -126,14 +126,15 @@ JWT_SECRET=your-super-secret-jwt-key
 JWT_EXPIRES_IN=1d
 COOKIE_EXPIRES_IN=86400000   # 1 day in ms
 
-# Email (Gmail example — use App Password)
-EMAIL_USERNAME=your-email@gmail.com
-EMAIL_PASSWORD=your-app-specific-password
+# Email
+BREVO_API_KEY=your-brevo-api-key
 
-# Cloudinary
-CLOUDINARY_CLOUD_NAME=your-cloud-name
-CLOUDINARY_API_KEY=your-api-key
-CLOUDINARY_API_SECRET=your-api-secret
+# AWS S3
+AWS_ACCESS_KEY_ID=your-access-key-id
+AWS_SECRET_ACCESS_KEY=your-secret-access-key
+AWS_REGION=your-aws-region
+S3_BUCKET_NAME=your-bucket-name
+S3_PUBLIC_URL=https://your-bucket.s3.region.amazonaws.com
 
 # CORS
 FRONTEND_URL=http://localhost:5173
@@ -271,11 +272,12 @@ Base path: `/api/v1`
 | `JWT_SECRET`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Secret key for JWT signing        |
 | `JWT_EXPIRES_IN`        | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Token expiry (e.g. `1d`)          |
 | `COOKIE_EXPIRES_IN`     | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Cookie expiry in milliseconds     |
-| `EMAIL_USERNAME`        | ![Yes](https://img.shields.io/badge/Required-Yes-green) | SMTP email address                |
-| `EMAIL_PASSWORD`        | ![Yes](https://img.shields.io/badge/Required-Yes-green) | SMTP password / app password      |
-| `CLOUDINARY_CLOUD_NAME` | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Cloudinary cloud name             |
-| `CLOUDINARY_API_KEY`    | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Cloudinary API key                |
-| `CLOUDINARY_API_SECRET` | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Cloudinary API secret             |
+| `BREVO_API_KEY`         | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Brevo API key                     |
+| `AWS_ACCESS_KEY_ID`     | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS Access Key ID                 |
+| `AWS_SECRET_ACCESS_KEY` | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS Secret Access Key             |
+| `AWS_REGION`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS Region                        |
+| `S3_BUCKET_NAME`        | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS S3 Bucket Name                |
+| `S3_PUBLIC_URL`         | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS S3 Public URL                 |
 | `FRONTEND_URL`          | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Frontend origin for CORS          |
 | `REDIS_HOST`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Redis host (default: `127.0.0.1`) |
 | `REDIS_PORT`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Redis port (default: `6379`)      |
@@ -298,7 +300,7 @@ socially/
 │   ├── models/            # Mongoose schemas
 │   ├── routes/            # Express routers
 │   ├── middleware/        # Auth, multer, rate limiter
-│   ├── utils/             # Socket.IO, Cloudinary, Redis, email, helpers
+│   ├── utils/             # Socket.IO, AWS S3, Redis, email, helpers
 │   ├── views/emails/      # EJS email templates
 │   ├── app.js             # Express setup
 │   └── server.js          # Entry point

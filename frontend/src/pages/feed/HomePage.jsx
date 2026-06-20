@@ -34,7 +34,6 @@ const HomePage = () => {
   });
 
   // Flatten all posts from all pages
-  // const posts = data?.pages.flatMap((page) => page.posts) || [];
   const posts = data?.pages?.flatMap((page) => page.posts) ?? [];
 
   // Intersection Observer for infinite scroll

@@ -11,11 +11,6 @@ const createRateLimiter = (windowMs, max, message = "Too many attempts. Please t
       const forwarded = req.headers["x-forwarded-for"];
 
       const ip = forwarded?.split(",")[0] || req.ip;
-      // console.log("DEBUG IP FIXED:", {
-      //   forwarded,
-      //   reqIp: req.ip,
-      //   finalIp: ip,
-      // });
 
       if (req.user?._id) {
         return `user:${req.user._id}`;
