@@ -4,6 +4,7 @@ import { X, Image as ImageIcon, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import api from "../../api/api";
 import toast from "react-hot-toast";
+import { useQueryClient } from "@tanstack/react-query";
 
 const CreatePostModal = ({ isOpen, onClose }) => {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ const CreatePostModal = ({ isOpen, onClose }) => {
   const [imageFile, setImageFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
 
   const handleFile = (file) => {
     if (!file.type.startsWith("image/")) {
@@ -63,6 +65,7 @@ const CreatePostModal = ({ isOpen, onClose }) => {
         setCaption("");
         setImageFile(null);
         setPreviewUrl("");
+        queryClient.invalidateQueries(["posts", "user"]); // Force profile feed refetch
         onClose();
         navigate("/");
       }

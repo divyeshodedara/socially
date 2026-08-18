@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Send, Image as ImageIcon, X, Loader2 } from "lucide-react";
 import api from "../../api/api";
@@ -11,6 +11,7 @@ import { format } from "date-fns";
 const ChatPage = () => {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const { state } = useLocation();
   const { user: currentUser } = useAuth();
   const { socket } = useSocket();
   const queryClient = useQueryClient();
@@ -33,10 +34,12 @@ const ChatPage = () => {
       }
       throw new Error("Failed to fetch messages");
     },
-    staleTime: 0, // ← also fix this: always refetch on navigation (stale msgs bug)
+    staleTime: 30000, // 30s — socket events handle real-time updates; avoid unnecessary refetches
+    refetchOnWindowFocus: false,
   });
 
-  // Fetch other user's profile
+  // Fetch other user's profile — uses initialData from router state or cache seed,
+  // so no network request fires when navigating from MessagesPage
   const { data: otherUser } = useQuery({
     queryKey: ["user", userId],
     queryFn: async () => {
@@ -46,7 +49,8 @@ const ChatPage = () => {
       }
       throw new Error("Failed to fetch user profile");
     },
-    staleTime: 120000, // Cache for 2 minutes
+    initialData: state?.otherUser ?? undefined, // from MessagesPage navigation state
+    staleTime: 120000, // 2 minutes
   });
 
   useEffect(() => {
@@ -78,7 +82,7 @@ const ChatPage = () => {
           queryClient.setQueryData(["messages", userId], (old = []) =>
             old.map((msg) => (msg.sender?._id === currentUser._id ? { ...msg, seen: true } : msg)),
           );
-          queryClient.invalidateQueries(["conversations"]);
+          // Conversations list is updated by MessagesPage's own socket listener
         }
       };
 
@@ -116,13 +120,23 @@ const ChatPage = () => {
     }
   }, [socket, userId, currentUser, queryClient]);
 
-  const markMessagesAsSeen = async () => {
-    try {
-      await api.patch(`/messages/${userId}/seen`);
-      queryClient.invalidateQueries(["messages", "unread"]);
-      queryClient.invalidateQueries(["conversations"]); // this re-fetches lastMessage with seen: true
-    } catch (error) {
-      console.error("Failed to mark messages as seen:", error);
+  const markMessagesAsSeen = () => {
+    if (socket && userId && currentUser?._id) {
+      socket.emit("markMessagesSeen", {
+        senderId: userId,
+        receiverId: currentUser._id,
+      });
+      
+      // Optimistically update the conversations list cache so the unread dot goes away immediately
+      queryClient.setQueryData(["conversations"], (old = []) =>
+        old.map((conv) => {
+          const isRelevantConv = conv.participants?.some(p => p?._id === userId);
+          if (isRelevantConv && conv.lastMessage) {
+            return { ...conv, lastMessage: { ...conv.lastMessage, seen: true } };
+          }
+          return conv;
+        }),
+      );
     }
   };
 
@@ -136,10 +150,9 @@ const ChatPage = () => {
       return response.data.data.message;
     },
     onSuccess: (newMessageData) => {
-      // Optimistically update messages cache
+      // Add the new message to the sender's chat cache directly
       queryClient.setQueryData(["messages", userId], (old = []) => [...old, newMessageData]);
-      // Invalidate conversations to update last message
-      queryClient.invalidateQueries(["conversations"]);
+      // Conversations list is updated by the socket newMessage event (no HTTP refetch needed)
       setNewMessage("");
       handleRemoveImage();
     },

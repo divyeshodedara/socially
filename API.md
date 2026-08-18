@@ -1,495 +1,643 @@
 # API Documentation
 
-This documentation provides detailed information about the Social Media API.
+Detailed reference for all REST API endpoints in the Socially platform.
 
-## 📂 API Base Info
+## 📂 Base Info
 
-**Base URL:**
-`http://localhost:3000/api/v1`
+**Base URL:** `http://localhost:8000/api/v1`
 
-**Authentication:**
-Use JWT token in the `Authorization` header:
-`Authorization: Bearer <token>`
+**Authentication:** JWT token is stored in an **HttpOnly cookie** set automatically on login. All protected routes read from this cookie — no manual `Authorization` header is needed in-browser. When using API clients (Postman, cURL), pass the cookie with each request.
+
+**Response envelope:**
+```json
+{
+  "status": "success" | "fail" | "error",
+  "message": "Human-readable message",
+  "data": { ... }
+}
+```
 
 ---
 
-## 🔐 Authentication
+## 🔐 Authentication — `/auth`
 
 ### Register User
 
 - **Method & URL:** `POST /auth/signup`
-- **Description:** Creates a new user account.
-- **Authentication:** Not Required
+- **Auth:** Not Required
 - **Request Body:**
   ```json
   {
-    "username": "testuser",
-    "email": "test@example.com",
-    "password": "password123"
+    "username": "divyesh",
+    "email": "divyesh@example.com",
+    "password": "securepassword"
   }
   ```
-- **Response (Success):**
+- **Response (201):**
   ```json
   {
-    "success": true,
-    "message": "User registered successfully. Please check your email to verify your account.",
-    "data": {
-      "user": {
-        "id": "60d21b4667d0d8992e610c85",
-        "username": "testuser",
-        "email": "test@example.com"
-      }
-    }
+    "status": "success",
+    "message": "OTP sent to your email. Please verify your account."
   }
   ```
-- **Response (Error):**
+- **Error — duplicate email/username (400):**
   ```json
-  {
-    "success": false,
-    "message": "User with this email or username already exists."
-  }
+  { "status": "fail", "message": "User with this email or username already exists." }
+  ```
+- **Error — disposable email (400):**
+  ```json
+  { "status": "fail", "message": "Disposable email addresses are not allowed." }
   ```
 
-### Login User
+---
+
+### Verify Email (OTP)
+
+- **Method & URL:** `POST /auth/verify`
+- **Auth:** Not Required
+- **Request Body:**
+  ```json
+  {
+    "email": "divyesh@example.com",
+    "otp": "483920"
+  }
+  ```
+- **Response (200):** Sets `jwt` HttpOnly cookie.
+  ```json
+  {
+    "status": "success",
+    "message": "Email verified successfully.",
+    "data": { "user": { "_id": "...", "username": "divyesh", "email": "divyesh@example.com" } }
+  }
+  ```
+- **Error — wrong/expired OTP (400):**
+  ```json
+  { "status": "fail", "message": "Invalid or expired OTP." }
+  ```
+
+---
+
+### Resend OTP
+
+- **Method & URL:** `POST /auth/resend-otp`
+- **Auth:** Not Required
+- **Request Body:**
+  ```json
+  { "email": "divyesh@example.com" }
+  ```
+- **Response (200):**
+  ```json
+  { "status": "success", "message": "New OTP sent to your email." }
+  ```
+
+---
+
+### Login
 
 - **Method & URL:** `POST /auth/login`
-- **Description:** Authenticates a user and returns a JWT token.
-- **Authentication:** Not Required
+- **Auth:** Not Required
 - **Request Body:**
   ```json
   {
-    "email": "test@example.com",
-    "password": "password123"
+    "email": "divyesh@example.com",
+    "password": "securepassword"
   }
   ```
-- **Response (Success):**
+- **Response (200):** Sets `jwt` HttpOnly cookie.
   ```json
   {
-    "success": true,
-    "message": "Login successful.",
-    "data": {
-      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "user": {
-        "id": "60d21b4667d0d8992e610c85",
-        "username": "testuser",
-        "email": "test@example.com"
-      }
-    }
+    "status": "success",
+    "message": "Logged in successfully.",
+    "data": { "user": { "_id": "...", "username": "divyesh", "email": "divyesh@example.com", "profilePicture": "...", "bio": "..." } }
   }
   ```
-- **Response (Error):**
+- **Error — invalid credentials (401):**
   ```json
-  {
-    "success": false,
-    "message": "Invalid credentials."
-  }
+  { "status": "fail", "message": "Invalid email or password." }
+  ```
+- **Error — email not verified (401):**
+  ```json
+  { "status": "fail", "message": "Please verify your email before logging in." }
   ```
 
-### Logout User
+---
+
+### Logout
 
 - **Method & URL:** `POST /auth/logout`
-- **Description:** Logs out the currently authenticated user.
-- **Authentication:** Required
-- **Response (Success):**
+- **Auth:** Required
+- **Response (200):** Clears `jwt` cookie.
+  ```json
+  { "status": "success", "message": "Logged out successfully." }
+  ```
+
+---
+
+### Forgot Password
+
+- **Method & URL:** `POST /auth/forget-password`
+- **Auth:** Not Required
+- **Request Body:**
+  ```json
+  { "email": "divyesh@example.com" }
+  ```
+- **Response (200):**
+  ```json
+  { "status": "success", "message": "Password reset OTP sent to your email." }
+  ```
+
+---
+
+### Reset Password
+
+- **Method & URL:** `POST /auth/reset-password`
+- **Auth:** Not Required
+- **Request Body:**
   ```json
   {
-    "success": true,
-    "message": "Logout successful."
+    "email": "divyesh@example.com",
+    "otp": "192837",
+    "newPassword": "newSecurePassword"
   }
   ```
-- **Response (Error):**
+- **Response (200):**
+  ```json
+  { "status": "success", "message": "Password reset successfully." }
+  ```
+
+---
+
+## 👤 Users — `/users`
+
+All user routes require authentication.
+
+### Get Current User
+
+- **Method & URL:** `GET /users/me`
+- **Response (200):**
   ```json
   {
-    "success": false,
-    "message": "You are not logged in."
+    "status": "success",
+    "data": {
+      "user": {
+        "_id": "...",
+        "username": "divyesh",
+        "email": "divyesh@example.com",
+        "profilePicture": "https://s3.amazonaws.com/...",
+        "bio": "Hello world",
+        "followers": ["..."],
+        "following": ["..."],
+        "posts": ["..."],
+        "savedPosts": [{ "_id": "...", "caption": "...", "image": { "url": "..." } }]
+      }
+    }
   }
   ```
 
 ---
 
-## 👤 Users
-
-### Get User Profile
+### Get User Profile by ID
 
 - **Method & URL:** `GET /users/profile/:id`
-- **Description:** Retrieves the profile of a specific user.
-- **Authentication:** Required
-- **Response (Success):**
+- **Response (200):**
   ```json
   {
-    "success": true,
-    "message": "Profile fetched successfully.",
+    "status": "success",
     "data": {
       "user": {
-        "id": "60d21b4667d0d8992e610c85",
-        "username": "testuser",
-        "profilePicture": "http://example.com/path/to/image.jpg",
-        "followers": [],
-        "following": []
+        "_id": "...",
+        "username": "admin",
+        "profilePicture": "https://s3.amazonaws.com/...",
+        "bio": "Platform admin",
+        "followers": ["..."],
+        "following": ["..."],
+        "posts": [{ "_id": "...", "image": { "url": "..." }, "caption": "..." }]
       }
     }
   }
   ```
-- **Response (Error):**
+- **Error (404):**
+  ```json
+  { "status": "fail", "message": "User not found." }
+  ```
+
+---
+
+### Suggested Users
+
+- **Method & URL:** `GET /users/suggested-users`
+- **Response (200):**
   ```json
   {
-    "success": false,
-    "message": "User not found."
+    "status": "success",
+    "results": 5,
+    "data": { "users": [ { "_id": "...", "username": "...", "profilePicture": "..." } ] }
   }
   ```
 
-### Update Profile
+---
 
-- **Method & URL:** `POST /users/edit-profile`
-- **Description:** Updates the profile of the authenticated user.
-- **Authentication:** Required
-- **Request Body (form-data):**
-  - `username` (string)
-  - `profilePicture` (file)
-- **Response (Success):**
+### Search Users
+
+- **Method & URL:** `GET /users/search?query=divyesh`
+- **Response (200):**
   ```json
   {
-    "success": true,
-    "message": "Profile updated successfully.",
-    "data": {
-      "user": {
-        "id": "60d21b4667d0d8992e610c85",
-        "username": "newusername",
-        "profilePicture": "http://example.com/path/to/new_image.jpg"
-      }
-    }
+    "status": "success",
+    "results": 1,
+    "data": { "users": [ { "_id": "...", "username": "divyesh", "profilePicture": "...", "bio": "..." } ] }
   }
   ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Failed to update profile."
-  }
-  ```
+
+---
 
 ### Follow User
 
 - **Method & URL:** `POST /users/follow/:id`
-- **Description:** Follows a specific user.
-- **Authentication:** Required
-- **Response (Success):**
+- **Side Effects:** Emits `new-notification` to the followed user and `follow-update` socket event.
+- **Response (200):**
   ```json
-  {
-    "success": true,
-    "message": "User followed successfully."
-  }
+  { "status": "success", "message": "User followed successfully." }
   ```
-- **Response (Error):**
+- **Error — already following (400):**
   ```json
-  {
-    "success": false,
-    "message": "User not found."
-  }
+  { "status": "fail", "message": "You are already following this user." }
   ```
+
+---
 
 ### Unfollow User
 
 - **Method & URL:** `POST /users/unfollow/:id`
-- **Description:** Unfollows a specific user.
-- **Authentication:** Required
-- **Response (Success):**
+- **Side Effects:** Emits `follow-update` socket event.
+- **Response (200):**
   ```json
-  {
-    "success": true,
-    "message": "User unfollowed successfully."
-  }
+  { "status": "success", "message": "User unfollowed successfully." }
   ```
-- **Response (Error):**
+
+---
+
+### Edit Profile
+
+- **Method & URL:** `POST /users/edit-profile`
+- **Content-Type:** `multipart/form-data`
+- **Request Fields:**
+  - `bio` (string, optional)
+  - `profilePicture` (file, optional — resized to 400×400 JPEG, stored in S3)
+- **Side Effects:** Invalidates `user:{id}` Redis cache.
+- **Response (200):**
   ```json
   {
-    "success": false,
-    "message": "User not found."
+    "status": "success",
+    "message": "Profile updated successfully.",
+    "data": { "user": { "_id": "...", "username": "divyesh", "bio": "Updated bio", "profilePicture": "https://s3.amazonaws.com/..." } }
   }
   ```
 
 ---
 
-## 📝 Posts
+## 📝 Posts — `/posts`
+
+All post routes require authentication.
+
+### Get Feed (All Posts — Paginated)
+
+- **Method & URL:** `GET /posts/all-posts?page=1&limit=10`
+- **Description:** Returns a globally shared, reverse-chronological feed of all posts. Results are cached in Redis for 1 minute.
+- **Response (200):**
+  ```json
+  {
+    "status": "Success",
+    "results": 10,
+    "data": {
+      "posts": [
+        {
+          "_id": "...",
+          "caption": "A beautiful sunset",
+          "image": { "url": "https://s3.amazonaws.com/..." },
+          "user": { "_id": "...", "username": "divyesh", "profilePicture": "..." },
+          "likes": ["..."],
+          "comments": ["..."],
+          "createdAt": "2026-08-18T04:00:00.000Z"
+        }
+      ],
+      "hasMore": true,
+      "currentPage": 1,
+      "totalPages": 5,
+      "total": 48
+    }
+  }
+  ```
+
+---
+
+### Get Posts by User
+
+- **Method & URL:** `GET /posts/user-posts/:id`
+- **Response (200):**
+  ```json
+  {
+    "status": "Success",
+    "results": 3,
+    "data": { "posts": [ { "_id": "...", "caption": "...", "image": { "url": "..." } } ] }
+  }
+  ```
+
+---
 
 ### Create Post
 
 - **Method & URL:** `POST /posts/create-post`
-- **Description:** Creates a new post.
-- **Authentication:** Required
-- **Request Body (form-data):**
-  - `content` (string)
-  - `image` (file)
-- **Response (Success):**
+- **Content-Type:** `multipart/form-data`
+- **Request Fields:**
+  - `image` (file, **required** — resized to 800×800 JPEG, uploaded to S3 under `posts/`)
+  - `caption` (string, optional)
+- **Side Effects:**
+  - Broadcasts `newPost` socket event to **all** connected users.
+  - Invalidates `posts:page:*` Redis cache.
+  - Invalidates `user:{id}` Redis cache.
+- **Response (201):**
   ```json
-  {
-    "success": true,
-    "message": "Post created successfully.",
-    "data": {
-      "post": {
-        "id": "60d21b4667d0d8992e610c86",
-        "content": "This is a new post.",
-        "image": "http://example.com/path/to/image.jpg",
-        "author": "60d21b4667d0d8992e610c85"
-      }
-    }
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Failed to create post."
-  }
-  ```
-
-### Get All Posts (Feed)
-
-- **Method & URL:** `GET /posts/all-posts`
-- **Description:** Retrieves all posts for the user's feed.
-- **Authentication:** Required
-- **Response (Success):**
-  ```json
-  {
-    "success": true,
-    "message": "Posts retrieved successfully.",
-    "data": {
-      "posts": [
-        {
-          "id": "60d21b4667d0d8992e610c86",
-          "content": "This is a post.",
-          "image": "http://example.com/path/to/image.jpg",
-          "author": {
-            "id": "60d21b4667d0d8992e610c85",
-            "username": "testuser"
-          },
-          "likes": [],
-          "comments": []
-        }
-      ]
-    }
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Failed to retrieve posts."
-  }
-  ```
-
-### Get Single Post
-
-- **Method & URL:** `GET /posts/:postId`
-- **Description:** Retrieves a single post by its ID.
-- **Authentication:** Required
-- **Response (Success):**
-  ```json
-  {
-    "success": true,
-    "message": "Post retrieved successfully.",
-    "data": {
-      "post": {
-        "id": "60d21b4667d0d8992e610c86",
-        "content": "This is a post.",
-        "image": "http://example.com/path/to/image.jpg",
-        "author": {
-          "id": "60d21b4667d0d8992e610c85",
-          "username": "testuser"
-        },
-        "likes": [],
-        "comments": []
-      }
-    }
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Post not found."
-  }
-  ```
-
-### Delete Post
-
-- **Method & URL:** `DELETE /posts/delete/:postId`
-- **Description:** Deletes a specific post.
-- **Authentication:** Required
-- **Response (Success):**
-  ```json
-  {
-    "success": true,
-    "message": "Post deleted successfully."
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "You are not authorized to delete this post."
-  }
+  { "status": "Success", "message": "Post Created" }
   ```
 
 ---
 
-## 💬 Comments
+### Like / Unlike Post (Toggle)
+
+- **Method & URL:** `POST /posts/like-dislike/:postId`
+- **Side Effects:**
+  - On like: creates a notification for the post owner and broadcasts `postLikeUpdated` to all users.
+  - On unlike: broadcasts `postLikeUpdated` to all users.
+- **Response (200):**
+  ```json
+  { "status": "Success", "message": "Post liked" }
+  ```
+  or
+  ```json
+  { "status": "Success", "message": "Post disliked" }
+  ```
+
+---
 
 ### Add Comment
 
 - **Method & URL:** `POST /posts/comment/:postId`
-- **Description:** Adds a comment to a specific post.
-- **Authentication:** Required
 - **Request Body:**
   ```json
-  {
-    "content": "This is a comment."
-  }
+  { "text": "Great photo!" }
   ```
-- **Response (Success):**
+- **Side Effects:**
+  - Creates a notification for the post owner.
+  - Broadcasts `newComment` socket event to all connected users.
+- **Response (201):**
   ```json
   {
-    "success": true,
-    "message": "Comment added successfully.",
+    "status": "Success",
+    "message": "Comment added successfully",
     "data": {
       "comment": {
-        "id": "60d21b4667d0d8992e610c87",
-        "content": "This is a comment.",
-        "author": "60d21b4667d0d8992e610c85",
-        "post": "60d21b4667d0d8992e610c86"
+        "_id": "...",
+        "text": "Great photo!",
+        "user": { "_id": "...", "username": "divyesh", "profilePicture": "..." },
+        "post": "...",
+        "createdAt": "2026-08-18T04:00:00.000Z"
       }
     }
   }
   ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Post not found."
-  }
-  ```
+
+---
 
 ### Get Comments for Post
 
 - **Method & URL:** `GET /posts/:postId/comments`
-- **Description:** Retrieves all comments for a specific post.
-- **Authentication:** Required
-- **Response (Success):**
+- **Response (200):**
   ```json
   {
-    "success": true,
-    "message": "Comments retrieved successfully.",
+    "status": "Success",
+    "results": 2,
     "data": {
       "comments": [
+        { "_id": "...", "text": "Nice!", "user": { "_id": "...", "username": "admin", "profilePicture": "..." }, "createdAt": "..." }
+      ]
+    }
+  }
+  ```
+
+---
+
+### Save / Unsave Post (Toggle)
+
+- **Method & URL:** `POST /posts/save/:postId`
+- **Side Effects:**
+  - Emits `postSavedUpdated` socket event to the requesting user's socket with `{ postId, isSaved, post }`.
+  - Invalidates `user:{id}` Redis cache.
+- **Response (200 — saved):**
+  ```json
+  { "status": "Success", "message": "Post saved Successfully" }
+  ```
+- **Response (200 — unsaved):**
+  ```json
+  { "status": "Success", "message": "Post unsaved Successfully" }
+  ```
+
+---
+
+### Delete Post
+
+- **Method & URL:** `DELETE /posts/delete/:postId`
+- **Side Effects:**
+  - Deletes image from AWS S3.
+  - Deletes all comments on the post.
+  - Removes post from all users' `savedPosts`.
+  - Emits `postDeleted` socket event to the post owner and all their followers.
+  - Invalidates `posts:page:*` and `user:{id}` Redis caches.
+- **Response (200):**
+  ```json
+  { "status": "Success", "message": "Post deleted Successfully" }
+  ```
+- **Error — not owner (403):**
+  ```json
+  { "status": "fail", "message": "You are not authorized to delete this post" }
+  ```
+
+---
+
+## 💬 Messages — `/messages`
+
+All message routes require authentication.
+
+### Get All Conversations
+
+- **Method & URL:** `GET /messages/conversations`
+- **Response (200):**
+  ```json
+  {
+    "status": "success",
+    "data": {
+      "conversations": [
         {
-          "id": "60d21b4667d0d8992e610c87",
-          "content": "This is a comment.",
-          "author": {
-            "id": "60d21b4667d0d8992e610c85",
-            "username": "testuser"
-          }
+          "_id": "...",
+          "participants": [
+            { "_id": "...", "username": "admin", "profilePicture": "..." },
+            { "_id": "...", "username": "divyesh", "profilePicture": "..." }
+          ],
+          "lastMessage": {
+            "_id": "...",
+            "message": "Hey!",
+            "image": null,
+            "sender": { "_id": "..." },
+            "receiver": { "_id": "..." },
+            "seen": false,
+            "createdAt": "2026-08-18T04:00:00.000Z"
+          },
+          "updatedAt": "2026-08-18T04:00:00.000Z"
         }
       ]
     }
   }
   ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Post not found."
-  }
-  ```
-
-### Delete Comment
-
-- **Method & URL:** `DELETE /comments/:commentId`
-- **Description:** Deletes a specific comment.
-- **Authentication:** Required
-- **Response (Success):**
-  ```json
-  {
-    "success": true,
-    "message": "Comment deleted successfully."
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "You are not authorized to delete this comment."
-  }
-  ```
 
 ---
 
-## ❤️ Likes
+### Get Message History
 
-### Like Post
-
-- **Method & URL:** `POST /posts/like-dislike/:postId`
-- **Description:** Likes a specific post.
-- **Authentication:** Required
-- **Response (Success):**
+- **Method & URL:** `GET /messages/:userId`
+- **Response (200):**
   ```json
   {
-    "success": true,
-    "message": "Post liked successfully."
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Post not found."
-  }
-  ```
-
-### Unlike Post
-
-- **Method & URL:** `POST /posts/like-dislike/:postId`
-- **Description:** Unlikes a specific post.
-- **Authentication:** Required
-- **Response (Success):**
-  ```json
-  {
-    "success": true,
-    "message": "Post unliked successfully."
-  }
-  ```
-- **Response (Error):**
-  ```json
-  {
-    "success": false,
-    "message": "Post not found."
-  }
-  ```
-
----
-
-## 📸 Media Upload
-
-### Upload Image
-
-- **Method & URL:** `POST /media/upload`
-- **Description:** Uploads an image and returns the URL.
-- **Authentication:** Required
-- **Request Body (form-data):**
-  - `image` (file)
-- **Response (Success):**
-  ```json
-  {
-    "success": true,
-    "message": "Image uploaded successfully.",
+    "status": "success",
     "data": {
-      "imageUrl": "http://example.com/path/to/uploaded_image.jpg"
+      "messages": [
+        {
+          "_id": "...",
+          "sender": { "_id": "...", "username": "admin" },
+          "receiver": { "_id": "...", "username": "divyesh" },
+          "message": "Hello!",
+          "image": null,
+          "seen": true,
+          "seenAt": "2026-08-18T04:10:00.000Z",
+          "createdAt": "2026-08-18T04:00:00.000Z"
+        }
+      ]
     }
   }
   ```
-- **Response (Error):**
+
+---
+
+### Send Message
+
+- **Method & URL:** `POST /messages/send`
+- **Content-Type:** `multipart/form-data`
+- **Request Fields:**
+  - `receiverId` (string, **required**)
+  - `message` (string, optional if `image` is provided)
+  - `image` (file, optional — resized, uploaded to S3 under `messages/`)
+- **Side Effects:**
+  - Emits `message` socket event (`type: 'newMessage'`) to the receiver.
+  - Updates or creates a `Conversation` document with the new `lastMessage`.
+- **Response (201):**
   ```json
   {
-    "success": false,
-    "message": "Image upload failed."
+    "status": "success",
+    "message": "Message sent successfully.",
+    "data": {
+      "message": {
+        "_id": "...",
+        "sender": { "_id": "...", "username": "divyesh" },
+        "receiver": { "_id": "..." },
+        "message": "Hey!",
+        "image": { "url": "https://s3.amazonaws.com/..." },
+        "seen": false,
+        "createdAt": "2026-08-18T04:00:00.000Z"
+      }
+    }
   }
   ```
+
+---
+
+## 🔔 Notifications — `/notifications`
+
+All notification routes require authentication.
+
+### Get Notifications
+
+- **Method & URL:** `GET /notifications`
+- **Description:** Returns the latest 20 notifications for the authenticated user.
+- **Response (200):**
+  ```json
+  {
+    "status": "success",
+    "results": 5,
+    "data": {
+      "notifications": [
+        {
+          "_id": "...",
+          "type": "like",
+          "sender": { "_id": "...", "username": "admin", "profilePicture": "..." },
+          "post": { "_id": "...", "image": { "url": "..." } },
+          "read": false,
+          "createdAt": "2026-08-18T04:00:00.000Z"
+        }
+      ]
+    }
+  }
+  ```
+
+---
+
+### Get Unread Notification Count
+
+- **Method & URL:** `GET /notifications/unread-count`
+- **Response (200):**
+  ```json
+  { "status": "success", "data": { "count": 3 } }
+  ```
+
+---
+
+### Mark All Notifications as Read
+
+- **Method & URL:** `PATCH /notifications/mark-all-read`
+- **Response (200):**
+  ```json
+  { "status": "success", "message": "All notifications marked as read." }
+  ```
+
+---
+
+### Mark One Notification as Read
+
+- **Method & URL:** `PATCH /notifications/:id/read`
+- **Response (200):**
+  ```json
+  { "status": "success", "message": "Notification marked as read." }
+  ```
+
+---
+
+### Delete Notification
+
+- **Method & URL:** `DELETE /notifications/:id`
+- **Response (200):**
+  ```json
+  { "status": "success", "message": "Notification deleted." }
+  ```
+
+---
+
+## ⚠️ Error Responses
+
+| HTTP Status | `status` field | When                                    |
+| ----------- | -------------- | --------------------------------------- |
+| 400         | `fail`         | Validation error, bad input             |
+| 401         | `fail`         | Not authenticated / invalid token       |
+| 403         | `fail`         | Authenticated but not authorized        |
+| 404         | `fail`         | Resource not found                      |
+| 429         | `fail`         | Rate limit exceeded                     |
+| 500         | `error`        | Unexpected server error                 |
+
+Rate-limited responses include `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers.

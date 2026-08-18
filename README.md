@@ -31,18 +31,21 @@
 **Posts**
 
 - Create posts with image upload (optimized via Sharp → AWS S3)
-- Infinite-scroll feed
-- Like / unlike posts (with optimistic UI)
+- Infinite-scroll feed (globally shared, not follower-only)
+- Like / unlike posts
 - Comment on posts
 - Save / unsave posts
-- Delete own posts
+- Delete own posts (cleans up S3, comments, and saved references)
 
 **Real-Time** _(Socket.IO)_
 
-- Live feed updates — new posts appear instantly for followers
+- Live feed updates — new posts broadcast to **all** connected users instantly
+- Live like & comment count updates broadcast to all users viewing a post
 - Real-time notifications (likes, comments, follows)
 - 1-on-1 messaging with image support
 - Typing indicators & message seen/delivered status
+- Unread message & notification badges set on connect via `initial-counts` event
+- Unread dot on MessagesPage clears immediately upon opening a conversation
 
 **UX**
 
@@ -50,6 +53,7 @@
 - Fully responsive — dedicated bottom nav on mobile
 - Skeleton loaders & toast notifications
 - Rate-limit-aware error pages
+- Hover-prefetch of messages — zero-latency chat open from MessagesPage
 
 ---
 
@@ -177,15 +181,15 @@ Base path: `/api/v1`
 
 ### Auth — `/auth`
 
-| Method | Endpoint                | Auth                                                    | Description                |
-| ------ | ----------------------- | ------------------------------------------------------- | -------------------------- |
-| POST   | `/auth/signup`          | ![Yes](https://img.shields.io/badge/Required-No-red)    | Register new user          |
-| POST   | `/auth/login`           | ![Yes](https://img.shields.io/badge/Required-No-red)    | Login, returns JWT cookie  |
-| POST   | `/auth/verify`          | ![Yes](https://img.shields.io/badge/Required-No-red)    | Verify email with OTP      |
-| POST   | `/auth/resend-otp`      | ![Yes](https://img.shields.io/badge/Required-No-red)    | Resend verification OTP    |
-| POST   | `/auth/forget-password` | ![Yes](https://img.shields.io/badge/Required-No-red)    | Request password reset OTP |
-| POST   | `/auth/reset-password`  | ![Yes](https://img.shields.io/badge/Required-No-red)    | Reset password with OTP    |
-| POST   | `/auth/logout`          | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Clear JWT cookie           |
+| Method | Endpoint                | Auth     | Description                |
+| ------ | ----------------------- | -------- | -------------------------- |
+| POST   | `/auth/signup`          | No       | Register new user          |
+| POST   | `/auth/login`           | No       | Login, returns JWT cookie  |
+| POST   | `/auth/verify`          | No       | Verify email with OTP      |
+| POST   | `/auth/resend-otp`      | No       | Resend verification OTP    |
+| POST   | `/auth/forget-password` | No       | Request password reset OTP |
+| POST   | `/auth/reset-password`  | No       | Reset password with OTP    |
+| POST   | `/auth/logout`          | Required | Clear JWT cookie           |
 
 ### Users — `/users`
 
@@ -203,13 +207,13 @@ Base path: `/api/v1`
 
 | Method | Endpoint                      | Description                        |
 | ------ | ----------------------------- | ---------------------------------- |
-| GET    | `/posts/all-posts`            | Paginated feed (`?page=&limit=`)   |
+| GET    | `/posts/all-posts`            | Paginated global feed (`?page=&limit=`) |
 | GET    | `/posts/user-posts/:id`       | All posts by a user                |
 | GET    | `/posts/:postId/comments`     | Comments for a post                |
 | POST   | `/posts/create-post`          | Create post with image (multipart) |
 | POST   | `/posts/like-dislike/:postId` | Toggle like                        |
 | POST   | `/posts/comment/:postId`      | Add comment                        |
-| POST   | `/posts/save/:postId`         | Toggle save                        |
+| POST   | `/posts/save/:postId`         | Toggle save/unsave                 |
 | DELETE | `/posts/delete/:postId`       | Delete own post                    |
 
 ### Messages — `/messages`
@@ -218,9 +222,7 @@ Base path: `/api/v1`
 | ------ | ------------------------- | ------------------------------------ |
 | GET    | `/messages/conversations` | List all conversations               |
 | GET    | `/messages/:userId`       | Message history with a user          |
-| GET    | `/messages/unread/count`  | Unread message count                 |
 | POST   | `/messages/send`          | Send message (text + optional image) |
-| PATCH  | `/messages/:userId/seen`  | Mark messages as seen                |
 
 ### Notifications — `/notifications`
 
@@ -238,25 +240,28 @@ Base path: `/api/v1`
 
 ### Client → Server
 
-| Event            | Payload                    | Description                |
-| ---------------- | -------------------------- | -------------------------- |
-| `user-connected` | `userId`                   | Register socket on connect |
-| `typing`         | `{ senderId, receiverId }` | User is typing             |
-| `stopTyping`     | `{ senderId, receiverId }` | User stopped typing        |
+| Event               | Payload                    | Description                                  |
+| ------------------- | -------------------------- | -------------------------------------------- |
+| `user-connected`    | `userId`                   | Register socket; server replies with initial counts |
+| `typing`            | `{ senderId, receiverId }` | User is typing in chat                       |
+| `stopTyping`        | `{ senderId, receiverId }` | User stopped typing                          |
+| `markMessagesSeen`  | `{ senderId, receiverId }` | Mark sender's messages as seen in DB         |
 
 ### Server → Client
 
-| Event               | Payload                                         | Description                          |
-| ------------------- | ----------------------------------------------- | ------------------------------------ |
-| `new-notification`  | notification object                             | Like / comment / follow notification |
-| `newPost`           | post object                                     | New post from a followed user        |
-| `postDeleted`       | `{ postId }`                                    | Post was deleted                     |
-| `postLikeUpdated`   | `{ postId, likesCount, userId }`                | Like count changed                   |
-| `newComment`        | `{ postId, comment, commentsCount }`            | New comment on a post                |
-| `postSavedUpdated`  | `{ postId, isSaved, post }`                     | Post saved/unsaved                   |
-| `message`           | `{ type: 'newMessage' \| 'messagesSeen', ... }` | New message or seen receipt          |
-| `userTyping`        | `{ userId }`                                    | Remote user is typing                |
-| `userStoppedTyping` | `{ userId }`                                    | Remote user stopped typing           |
+| Event               | Payload                                         | Description                                  |
+| ------------------- | ----------------------------------------------- | -------------------------------------------- |
+| `initial-counts`    | `{ unreadMessageCount, unreadNotificationCount }` | Sent once after `user-connected`             |
+| `new-notification`  | notification object                             | Like / comment / follow notification         |
+| `follow-update`     | `{ action, followerId }`                        | Follower count updated on recipient's device |
+| `newPost`           | post object                                     | New post broadcast to all connected users    |
+| `postDeleted`       | `{ postId }`                                    | Post removed; clients filter it from feed    |
+| `postLikeUpdated`   | `{ postId, likesCount, userId }`                | Like count changed, broadcast to all         |
+| `newComment`        | `{ postId, comment, commentsCount }`            | New comment broadcast to all                 |
+| `postSavedUpdated`  | `{ postId, isSaved, post }`                     | Post saved/unsaved (user-specific)           |
+| `message`           | `{ type: 'newMessage' \| 'messagesSeen', ... }` | New message or seen receipt                  |
+| `userTyping`        | `{ userId }`                                    | Remote user is typing                        |
+| `userStoppedTyping` | `{ userId }`                                    | Remote user stopped typing                   |
 
 ---
 
@@ -264,30 +269,30 @@ Base path: `/api/v1`
 
 ### Backend (`backend/.env`)
 
-| Variable                | Required                                                | Description                       |
-| ----------------------- | ------------------------------------------------------- | --------------------------------- |
-| `NODE_ENV`              | ![Yes](https://img.shields.io/badge/Required-Yes-green) | `development` or `production`     |
-| `PORT`                  | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Server port (default: 8000)       |
-| `DB_URL`                | ![Yes](https://img.shields.io/badge/Required-Yes-green) | MongoDB connection string         |
-| `JWT_SECRET`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Secret key for JWT signing        |
-| `JWT_EXPIRES_IN`        | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Token expiry (e.g. `1d`)          |
-| `COOKIE_EXPIRES_IN`     | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Cookie expiry in milliseconds     |
-| `BREVO_API_KEY`         | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Brevo API key                     |
-| `AWS_ACCESS_KEY_ID`     | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS Access Key ID                 |
-| `AWS_SECRET_ACCESS_KEY` | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS Secret Access Key             |
-| `AWS_REGION`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS Region                        |
-| `S3_BUCKET_NAME`        | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS S3 Bucket Name                |
-| `S3_PUBLIC_URL`         | ![Yes](https://img.shields.io/badge/Required-Yes-green) | AWS S3 Public URL                 |
-| `FRONTEND_URL`          | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Frontend origin for CORS          |
-| `REDIS_HOST`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Redis host (default: `127.0.0.1`) |
-| `REDIS_PORT`            | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Redis port (default: `6379`)      |
+| Variable                | Required | Description                       |
+| ----------------------- | -------- | --------------------------------- |
+| `NODE_ENV`              | Yes      | `development` or `production`     |
+| `PORT`                  | Yes      | Server port (default: 8000)       |
+| `DB_URL`                | Yes      | MongoDB connection string         |
+| `JWT_SECRET`            | Yes      | Secret key for JWT signing        |
+| `JWT_EXPIRES_IN`        | Yes      | Token expiry (e.g. `1d`)          |
+| `COOKIE_EXPIRES_IN`     | Yes      | Cookie expiry in milliseconds     |
+| `BREVO_API_KEY`         | Yes      | Brevo transactional email API key |
+| `AWS_ACCESS_KEY_ID`     | Yes      | AWS Access Key ID                 |
+| `AWS_SECRET_ACCESS_KEY` | Yes      | AWS Secret Access Key             |
+| `AWS_REGION`            | Yes      | AWS Region                        |
+| `S3_BUCKET_NAME`        | Yes      | AWS S3 Bucket Name                |
+| `S3_PUBLIC_URL`         | Yes      | AWS S3 Public URL                 |
+| `FRONTEND_URL`          | Yes      | Frontend origin for CORS          |
+| `REDIS_HOST`            | Yes      | Redis host (default: `127.0.0.1`) |
+| `REDIS_PORT`            | Yes      | Redis port (default: `6379`)      |
 
 ### Frontend (`frontend/.env`)
 
-| Variable          | Required                                                | Description           |
-| ----------------- | ------------------------------------------------------- | --------------------- |
-| `VITE_API_URL`    | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Backend API base URL  |
-| `VITE_SOCKET_URL` | ![Yes](https://img.shields.io/badge/Required-Yes-green) | Backend Socket.IO URL |
+| Variable          | Required | Description           |
+| ----------------- | -------- | --------------------- |
+| `VITE_API_URL`    | Yes      | Backend API base URL  |
+| `VITE_SOCKET_URL` | Yes      | Backend Socket.IO URL |
 
 ---
 
@@ -302,6 +307,7 @@ socially/
 │   ├── middleware/        # Auth, multer, rate limiter
 │   ├── utils/             # Socket.IO, AWS S3, Redis, email, helpers
 │   ├── views/emails/      # EJS email templates
+│   ├── delete.js          # Admin utility: deep-delete a user and all their data
 │   ├── app.js             # Express setup
 │   └── server.js          # Entry point
 └── frontend/
@@ -313,10 +319,6 @@ socially/
 ```
 
 ---
-
-<!-- ## License
-
-[ISC](LICENSE) © Divyesh Odedara -->
 
 ## License
 

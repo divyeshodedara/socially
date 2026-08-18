@@ -8,6 +8,21 @@ import { useAuth } from "../../context/AuthContext";
 import { useSocket } from "../../context/SocketContext";
 import { formatDistanceToNow } from "date-fns";
 
+const formatShortTime = (date) => {
+  const now = new Date();
+  const diffInSeconds = Math.floor((now - date) / 1000);
+  if (diffInSeconds < 60) return "just now";
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+  if (diffInMinutes < 60) return `${diffInMinutes}m`;
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) return `${diffInHours}h`;
+  const diffInDays = Math.floor(diffInHours / 24);
+  if (diffInDays < 7) return `${diffInDays}d`;
+  const diffInWeeks = Math.floor(diffInDays / 7);
+  if (diffInWeeks < 52) return `${diffInWeeks}w`;
+  return `${Math.floor(diffInWeeks / 52)}y`;
+};
+
 const MessagesPage = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -29,9 +44,9 @@ const MessagesPage = () => {
       }
       throw new Error("Failed to fetch conversations");
     },
-    staleTime: 0, // Cache for 1 minute
+    staleTime: 5 * 60 * 1000, // 5 minutes — socket events keep this up-to-date
+    refetchOnWindowFocus: false, // socket handles real-time sync, no poll needed
     retry: (failureCount, error) => {
-      // Don't retry on rate limit errors
       if (error.response?.status === 429) return false;
       return failureCount < 2;
     },
@@ -41,12 +56,29 @@ const MessagesPage = () => {
     clearUnreadMessages();
   }, []);
 
-  // Listen for new messages
+  // Listen for new messages — update conversation list directly without HTTP refetch
   useEffect(() => {
     if (socket) {
       const handleNewMessage = (data) => {
-        if (data.type === "newMessage" || data.type === "messagesSeen") {
-          queryClient.invalidateQueries(["conversations"]);
+        if (data.type === "newMessage" && data.conversation) {
+          // Push the updated conversation to the top of the cache — zero HTTP round-trips
+          queryClient.setQueryData(["conversations"], (old = []) => {
+            const filtered = old.filter((c) => c._id !== data.conversation._id);
+            return [data.conversation, ...filtered];
+          });
+        }
+        if (data.type === "messagesSeen") {
+          // Mark lastMessage as seen in-memory for the relevant conversation
+          queryClient.setQueryData(["conversations"], (old = []) =>
+            old.map((conv) => {
+              if (!conv.lastMessage) return conv;
+              const isRelevantConv = conv.participants?.some(p => p?._id === data.seenBy);
+              if (isRelevantConv) {
+                return { ...conv, lastMessage: { ...conv.lastMessage, seen: true } };
+              }
+              return conv;
+            }),
+          );
         }
       };
 
@@ -164,11 +196,11 @@ const MessagesPage = () => {
               return (
                 <div
                   key={conversation._id}
-                  onClick={() => navigate(`/messages/${otherUser._id}`)}
+                  onClick={() => navigate(`/messages/${otherUser._id}`, { state: { otherUser } })}
                   onMouseEnter={() => {
-                    // FIX 4 continued: Safety check before prefetching
                     if (!otherUser._id) return;
 
+                    // Prefetch messages for instant chat open
                     queryClient.prefetchQuery({
                       queryKey: ["messages", otherUser._id],
                       queryFn: async () => {
@@ -178,6 +210,13 @@ const MessagesPage = () => {
                         }
                         return [];
                       },
+                      staleTime: 30000,
+                    });
+
+                    // Seed profile cache directly from conversation data — no network request
+                    queryClient.setQueryData(["user", otherUser._id], (old) => {
+                      if (old) return old; // already fully fetched, don't overwrite
+                      return otherUser; // use participant data from conversations
                     });
                   }}
                   className="p-4 hover:bg-mono-100 dark:hover:bg-mono-800 cursor-pointer transition-all duration-200"
@@ -189,23 +228,13 @@ const MessagesPage = () => {
                       className="w-12 h-12 rounded-full object-cover border-2 border-mono-300 dark:border-mono-700"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <h3
-                          className={`font-semibold truncate ${
-                            isUnread ? "text-mono-black dark:text-mono-white" : "text-mono-700 dark:text-mono-300"
-                          }`}
-                        >
-                          {otherUser?.username || "Unknown User"}
-                        </h3>
-                        {/* FIX 3: Ensure createdAt exists before formatting date */}
-                        {lastMessage?.createdAt && (
-                          <span className="text-xs text-mono-500">
-                            {formatDistanceToNow(new Date(lastMessage.createdAt), {
-                              addSuffix: true,
-                            })}
-                          </span>
-                        )}
-                      </div>
+                      <h3
+                        className={`font-semibold truncate mb-1 ${
+                          isUnread ? "text-mono-black dark:text-mono-white" : "text-mono-700 dark:text-mono-300"
+                        }`}
+                      >
+                        {otherUser?.username || "Unknown User"}
+                      </h3>
                       {lastMessage && (
                         <p
                           className={`text-sm truncate ${
@@ -218,7 +247,15 @@ const MessagesPage = () => {
                         </p>
                       )}
                     </div>
-                    {isUnread && <div className="w-3 h-3 bg-mono-black dark:bg-mono-white rounded-full"></div>}
+                    
+                    <div className="flex flex-col items-end gap-1.5 min-w-[50px]">
+                      {lastMessage?.createdAt && (
+                        <span className="text-xs text-mono-500 font-medium whitespace-nowrap">
+                          {formatShortTime(new Date(lastMessage.createdAt))}
+                        </span>
+                      )}
+                      {isUnread && <div className="w-2.5 h-2.5 bg-mono-black dark:bg-mono-white rounded-full"></div>}
+                    </div>
                   </div>
                 </div>
               );

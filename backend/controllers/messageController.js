@@ -66,9 +66,22 @@ export const sendMessage = catchAsync(async (req, res, next) => {
     await conversation.save();
   }
 
+  // Populate the conversation so the receiver can update their list without an HTTP refetch
+  const populatedConversation = await Conversation.findById(conversation._id)
+    .populate({ path: "participants", select: "username profilePicture" })
+    .populate({
+      path: "lastMessage",
+      select: "message image seen createdAt sender receiver",
+      populate: [
+        { path: "sender", select: "_id username" },
+        { path: "receiver", select: "_id username" },
+      ],
+    });
+
   sendMessageToUser(receiverId, {
     type: "newMessage",
     message: newMessage,
+    conversation: populatedConversation,
   });
 
   res.status(201).json({
@@ -131,34 +144,6 @@ export const getConversations = catchAsync(async (req, res, next) => {
     data: {
       conversations,
     },
-  });
-});
-
-// Mark messages as seen
-export const markAsSeen = catchAsync(async (req, res, next) => {
-  const { userId } = req.params;
-  const currentUserId = req.user._id;
-  await Message.updateMany(
-    {
-      sender: userId,
-      receiver: currentUserId,
-      seen: false,
-    },
-    {
-      seen: true,
-      seenAt: new Date(),
-    },
-  );
-
-  // Notify sender via socket that messages were seen
-  sendMessageToUser(userId, {
-    type: "messagesSeen",
-    seenBy: currentUserId,
-  });
-
-  res.status(200).json({
-    status: "success",
-    message: "Messages marked as seen",
   });
 });
 

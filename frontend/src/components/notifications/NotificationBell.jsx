@@ -7,15 +7,9 @@ import api from "../../api/api";
 import { formatDistanceToNow } from "date-fns";
 
 const NotificationBell = () => {
-  const { notifications, unreadCount, markAsRead, markAllAsRead, setNotifications, setUnreadCount } = useSocket();
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useSocket();
   const [isOpen, setIsOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    // Fetch existing notifications on mount
-    fetchNotifications();
-  }, []);
 
   useEffect(() => {
     // Close dropdown when clicking outside
@@ -28,28 +22,6 @@ const NotificationBell = () => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-
-  const fetchNotifications = async () => {
-    setLoading(true);
-    try {
-      const [notifResponse, countResponse] = await Promise.all([
-        api.get("/notifications"),
-        api.get("/notifications/unread-count"),
-      ]);
-
-      if (notifResponse.data.status === "success") {
-        setNotifications(notifResponse.data.data.notifications);
-      }
-
-      if (countResponse.data.status === "success") {
-        setUnreadCount(countResponse.data.data.count);
-      }
-    } catch (error) {
-      console.error("Failed to fetch notifications:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleMarkAsRead = async (notificationId) => {
     try {
@@ -207,11 +179,7 @@ const NotificationBell = () => {
 
             {/* Notifications List */}
             <div className="overflow-y-auto max-h-[28rem] scrollbar-thin scrollbar-thumb-mono-400 dark:scrollbar-thumb-mono-600 scrollbar-track-transparent">
-              {loading ? (
-                <div className="p-8 text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-mono-black dark:border-mono-white mx-auto"></div>
-                </div>
-              ) : notifications.length === 0 ? (
+              {notifications.length === 0 ? (
                 <div className="p-12 text-center">
                   <div className="bg-mono-100 dark:bg-mono-800 rounded-full p-4 w-16 h-16 mx-auto mb-3 flex items-center justify-center">
                     <Bell className="w-8 h-8 text-mono-400 dark:text-mono-600" />

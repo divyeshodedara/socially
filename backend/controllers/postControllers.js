@@ -8,6 +8,7 @@ import Comment from "../models/comment.model.js";
 import { createNotification } from "./notificationController.js";
 import {
   sendNewPostToUser,
+  broadcastNewPost,
   broadcastPostLikeUpdate,
   broadcastNewComment,
   sendSavedPostUpdate,
@@ -15,6 +16,13 @@ import {
 } from "../utils/socket.js";
 import redis from "../utils/redis.js";
 import { uploadToS3,deleteFromS3 } from "../utils/s3.js";
+
+const invalidateFeedCache = async () => {
+  const keys = await redis.keys("posts:page:*");
+  if (keys.length > 0) {
+    await redis.del(...keys);
+  }
+};
 
 const createPost = catchAsync(async (req, res, next) => {
   const { caption } = req.body;
@@ -46,6 +54,7 @@ const createPost = catchAsync(async (req, res, next) => {
   if (user) {
     user.posts.push(post.id);
     await user.save({ validateBeforeSave: false });
+    await redis.del(`user:${userId}`);
   }
 
   post = await post.populate({
@@ -54,13 +63,11 @@ const createPost = catchAsync(async (req, res, next) => {
   });
 
   const creator = await User.findById(userId).select("followers");
-  sendNewPostToUser(userId.toString(), post);
+  
+  // The feed is global, so broadcast to all connected users
+  broadcastNewPost(post);
 
-  if (creator && creator.followers && creator.followers.length > 0) {
-    creator.followers.forEach((followerId) => {
-      sendNewPostToUser(followerId.toString(), post);
-    });
-  }
+  await invalidateFeedCache();
 
   res.status(201).json({
     status: "Success",
@@ -133,6 +140,7 @@ const saveOrUnsavePost = catchAsync(async (req, res, next) => {
   if (isSaved) {
     user.savedPosts.pull(postId);
     await user.save({ validateBeforeSave: false });
+    await redis.del(`user:${userId}`); // Invalidate stale cache
 
     // Send socket update to user
     sendSavedPostUpdate(userId, postId, false);
@@ -144,6 +152,7 @@ const saveOrUnsavePost = catchAsync(async (req, res, next) => {
   } else {
     user.savedPosts.push(postId);
     await user.save({ validateBeforeSave: false });
+    await redis.del(`user:${userId}`); // Invalidate stale cache
 
     // Fetch the post details to send to user
     const post = await Post.findById(postId).populate({
@@ -175,6 +184,7 @@ const deletePost = catchAsync(async (req, res, next) => {
   const creator = await User.findById(userId).select("followers");
 
   await User.updateOne({ _id: userId }, { $pull: { posts: postId } });
+  await redis.del(`user:${userId}`);
 
   await User.updateMany({ savedPosts: postId }, { $pull: { savedPosts: postId } });
 
@@ -193,6 +203,8 @@ const deletePost = catchAsync(async (req, res, next) => {
       sendPostDeletedToUser(followerId.toString(), postId);
     });
   }
+
+  await invalidateFeedCache();
 
   res.status(200).json({
     status: "Success",

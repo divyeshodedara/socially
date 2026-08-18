@@ -47,9 +47,7 @@ const SavedPostsPage = () => {
     return () => socket.off("postSavedUpdated", handlePostSavedUpdate);
   }, [socket, queryClient]);
 
-  const handlePostUpdate = () => {
-    queryClient.invalidateQueries(["user", "me"]);
-  };
+
 
   if (isLoading) {
     return (
@@ -94,7 +92,7 @@ const SavedPostsPage = () => {
       ) : (
         <div className="space-y-6">
           {savedPosts.map((post) => (
-            <Post key={post._id} post={post} onUpdate={handlePostUpdate} />
+            <Post key={post._id} post={post} />
           ))}
         </div>
       )}

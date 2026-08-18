@@ -75,6 +75,7 @@ socially/
 ├── backend/
 │   ├── server.js                  # Entry point — DB + Socket.IO init
 │   ├── app.js                     # Express app, middleware, routes
+│   ├── delete.js                  # Admin utility: deep-delete a user by email
 │   ├── controllers/
 │   │   ├── authControllers.js     # Signup, login, OTP, password reset
 │   │   ├── userControllers.js     # Profile, follow/unfollow, search
@@ -101,13 +102,12 @@ socially/
 │   │   └── rateLimiter.js        # Per-route rate limiters
 │   ├── utils/
 │   │   ├── socket.js              # Socket.IO init & event emitters
-│   │   ├── s3.js                  # AWS S3 upload helper
+│   │   ├── s3.js                  # AWS S3 upload/delete helpers
 │   │   ├── redis.js               # ioredis client
 │   │   ├── email.js               # Brevo + EJS template sender
 │   │   ├── generateOtp.js         # Crypto-based OTP generator
 │   │   ├── appError.js            # Operational error class
 │   │   ├── catchAsync.js          # Async error wrapper
-│   │   ├── dataUri.js             # File buffer → data URI
 │   │   └── env.js                 # dotenv loader
 │   └── views/emails/
 │       └── otp.ejs                # OTP email template
@@ -118,7 +118,7 @@ socially/
     │   │   └── api.js             # Axios instance + 401 interceptor
     │   ├── context/
     │   │   ├── AuthContext.jsx    # Auth state, login/logout/signup
-    │   │   ├── SocketContext.jsx  # Socket.IO connection + notifications
+    │   │   ├── SocketContext.jsx  # Socket.IO connection + notifications + badge counts
     │   │   └── ThemeContext.jsx   # Dark/light mode persistence
     │   ├── components/
     │   │   ├── layout/            # Navbar, Sidebar, BottomNav, Layout
@@ -190,11 +190,13 @@ isVerified, createdAt
 ### Post
 
 ```
-user (ref), caption, image: { url, public_id },
+user (ref), caption, image: { url, key },
 likes[], comments[], createdAt
 ```
 
 Index: `{ user: 1, createdAt: -1 }`
+
+> `image.key` stores the AWS S3 object key used for deletion via `deleteFromS3()`.
 
 ### Comment
 
@@ -205,7 +207,7 @@ user (ref), post (ref), text (max 500 chars), createdAt
 ### Message
 
 ```
-sender (ref), receiver (ref), message, image: { url, public_id },
+sender (ref), receiver (ref), message, image: { url, key },
 seen, seenAt, createdAt
 ```
 
@@ -239,26 +241,55 @@ The Socket.IO server runs on the **same HTTP server** as Express. User socket co
 ```
 Client connects → socket.on('user-connected', userId)
                → userSockets.set(userId, socket.id)
+               → Query DB for unread message + notification counts
+               → socket.emit('initial-counts', { unreadMessageCount, unreadNotificationCount })
 
 Client disconnects → iterate userSockets → delete entry
 ```
 
+### Broadcast vs. Targeted Events
+
+| Pattern | When Used | Example |
+| ------- | --------- | ------- |
+| `io.emit(event, data)` | Broadcast to **all** connected clients | New post, like update, new comment |
+| `io.to(socketId).emit(event, data)` | Send to a **specific user** | New message, notification, follow update |
+
 ### Event Reference
 
-| Direction       | Event               | Payload                              | Trigger                |
-| --------------- | ------------------- | ------------------------------------ | ---------------------- |
-| Client → Server | `user-connected`    | `userId`                             | On socket connect      |
-| Client → Server | `typing`            | `{ senderId, receiverId }`           | Keystroke in chat      |
-| Client → Server | `stopTyping`        | `{ senderId, receiverId }`           | Keystroke timeout      |
-| Server → Client | `new-notification`  | notification object                  | Like, comment, follow  |
-| Server → Client | `newPost`           | post object                          | Post created           |
-| Server → Client | `postDeleted`       | `{ postId }`                         | Post deleted           |
-| Server → Client | `postLikeUpdated`   | `{ postId, likesCount, userId }`     | Like toggled           |
-| Server → Client | `newComment`        | `{ postId, comment, commentsCount }` | Comment added          |
-| Server → Client | `postSavedUpdated`  | `{ postId, isSaved, post }`          | Post saved/unsaved     |
-| Server → Client | `message`           | `{ type, message/seenBy }`           | New message or seen    |
-| Server → Client | `userTyping`        | `{ userId }`                         | Typing event forwarded |
-| Server → Client | `userStoppedTyping` | `{ userId }`                         | Stop typing forwarded  |
+| Direction       | Event               | Payload                                         | Trigger                       |
+| --------------- | ------------------- | ----------------------------------------------- | ----------------------------- |
+| Client → Server | `user-connected`    | `userId`                                        | On socket connect             |
+| Client → Server | `typing`            | `{ senderId, receiverId }`                      | Keystroke in chat             |
+| Client → Server | `stopTyping`        | `{ senderId, receiverId }`                      | Keystroke timeout / leave     |
+| Client → Server | `markMessagesSeen`  | `{ senderId, receiverId }`                      | Chat opened / message viewed  |
+| Server → Client | `initial-counts`    | `{ unreadMessageCount, unreadNotificationCount }` | After `user-connected`       |
+| Server → Client | `new-notification`  | notification object                             | Like, comment, follow         |
+| Server → Client | `follow-update`     | `{ action, followerId }`                        | Follow / unfollow             |
+| Server → Client | `newPost`           | post object                                     | Post created (all users)      |
+| Server → Client | `postDeleted`       | `{ postId }`                                    | Post deleted                  |
+| Server → Client | `postLikeUpdated`   | `{ postId, likesCount, userId }`                | Like toggled (all users)      |
+| Server → Client | `newComment`        | `{ postId, comment, commentsCount }`            | Comment added (all users)     |
+| Server → Client | `postSavedUpdated`  | `{ postId, isSaved, post }`                     | Post saved/unsaved (user only)|
+| Server → Client | `message`           | `{ type: 'newMessage' \| 'messagesSeen', ... }` | New message or seen receipt   |
+| Server → Client | `userTyping`        | `{ userId }`                                    | Typing event forwarded        |
+| Server → Client | `userStoppedTyping` | `{ userId }`                                    | Stop typing forwarded         |
+
+### markMessagesSeen Flow
+
+```
+User opens ChatPage
+        │
+        ▼
+socket.emit('markMessagesSeen', { senderId: otherUserId, receiverId: myId })
+        │
+        ▼  (server)
+Message.updateMany({ sender, receiver, seen: false }, { seen: true })
+io.to(senderSocket).emit('message', { type: 'messagesSeen', seenBy: myId })
+        │
+        ▼  (client — ChatPage)
+Optimistically: queryClient.setQueryData(['conversations'], mark seen)
+      ↳ Unread dot on MessagesPage disappears immediately (no HTTP round-trip)
+```
 
 ---
 
@@ -274,13 +305,10 @@ multer (memoryStorage) → file in req.file.buffer
 sharp → resize to 800×800 (fit: inside) → JPEG quality 80
       │
       ▼
-Convert buffer → base64 data URI (skipped for S3, direct buffer upload)
+uploadToS3() → stored in S3 bucket under posts/ or messages/
       │
       ▼
-uploadToS3() → stored in S3 bucket under posts/
-      │
-      ▼
-Store { secure_url, key } in MongoDB document
+Store { url, key } in MongoDB document
 ```
 
 On deletion, `deleteFromS3(key)` is called to clean up storage.
@@ -295,7 +323,15 @@ On deletion, `deleteFromS3(key)` is called to clean up storage.
 | `user:{id}`                | 1 hour | Serialized user document |
 | `posts:page:{n}:limit:{m}` | 1 min  | Paginated posts response |
 
-The `user:{id}` cache is invalidated on profile update and on logout.
+The `user:{id}` cache is invalidated on:
+- Profile update
+- Logout
+- Post creation / deletion (user's `posts[]` array changes)
+- Save / unsave post (user's `savedPosts[]` array changes)
+
+The `posts:page:*` cache is invalidated on:
+- Post creation
+- Post deletion
 
 ---
 
@@ -333,13 +369,15 @@ The `user:{id}` cache is invalidated on profile update and on logout.
 | ---------------------------------------- | --------------------------------------------- |
 | Server state (posts, profiles, messages) | TanStack Query (cache + background sync)      |
 | Auth state (current user)                | React Context (`AuthContext`)                 |
-| Socket + notifications                   | React Context (`SocketContext`)               |
+| Socket + notifications + badge counts    | React Context (`SocketContext`)               |
 | Theme preference                         | React Context + localStorage (`ThemeContext`) |
 | Local UI state (modals, forms)           | `useState`                                    |
 
-**Optimistic updates** are used for likes (immediate toggle, revert on error) and follow/unfollow actions to keep the UI snappy.
+**Optimistic updates** are used for likes, follow/unfollow, save/unsave, and marking messages as seen — so the UI responds instantly without waiting for server confirmation.
 
 Socket.IO events drive **cache mutations** directly (e.g., `queryClient.setQueryData`) so the UI updates in real time without an extra network round-trip.
+
+**Hover-prefetch:** Hovering over a conversation row in MessagesPage pre-fetches messages via `queryClient.prefetchQuery`, making the chat open feel instantaneous.
 
 ---
 

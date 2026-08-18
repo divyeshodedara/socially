@@ -7,11 +7,11 @@ import { useAuth } from "../../context/AuthContext";
 import { useSocket } from "../../context/SocketContext";
 import api from "../../api/api";
 import { formatDistanceToNow } from "date-fns";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
 const Post = ({ post, onUpdate }) => {
-  const { user, updateUser } = useAuth();
+  const { user } = useAuth();
   const { socket } = useSocket();
   const navigate = useNavigate();
   const [commentText, setCommentText] = useState("");
@@ -24,17 +24,17 @@ const Post = ({ post, onUpdate }) => {
   const [showMenu, setShowMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loadingComments, setLoadingComments] = useState(false);
-  const [isSaved, setIsSaved] = useState(false); // will be set by effect below
   const [showShareMenu, setShowShareMenu] = useState(false);
 
   const queryClient = useQueryClient();
-
   const isOwnPost = post.user?._id === user?._id;
+  const { data: cachedUser } = useQuery({
+    queryKey: ["user", "me"],
+    enabled: false, // Don't fetch on mount, just subscribe to cache updates
+  });
 
-  useEffect(() => {
-    const saved = (user?.savedPosts || []).some((s) => (s?._id || s)?.toString() === post._id?.toString());
-    setIsSaved(saved);
-  }, [user?.savedPosts, post._id]);
+  const savedList = cachedUser?.savedPosts || user?.savedPosts || [];
+  const isSaved = savedList.some((s) => (s?._id || s)?.toString() === post._id?.toString());
 
   // Listen for real-time like updates
   useEffect(() => {
@@ -82,7 +82,7 @@ const Post = ({ post, onUpdate }) => {
     try {
       await api.post(`/posts/like-dislike/${post._id}`);
 
-      // ✅ Sync the feed cache so remounts read correct state
+      // Sync the feed cache so remounts read correct state
       queryClient.setQueryData(["posts", "feed"], (old) => {
         if (!old) return old;
 
@@ -118,41 +118,33 @@ const Post = ({ post, onUpdate }) => {
 
   const handleSave = async () => {
     const wasSaved = isSaved;
-    setIsSaved(!wasSaved);
+    
+    // Optimistic cache update
+    const updateCache = (savedStatus) => {
+      queryClient.setQueryData(["user", "me"], (old) => {
+        const filterFn = (s) => (s?._id || s)?.toString() !== post._id?.toString();
+        const baseUser = old || user;
+        if (!baseUser) return old;
+        
+        return {
+          ...baseUser,
+          savedPosts: savedStatus
+            ? [post, ...(baseUser.savedPosts || [])]
+            : (baseUser.savedPosts || []).filter(filterFn),
+        };
+      });
+    };
+
+    updateCache(!wasSaved);
 
     try {
       const response = await api.post(`/posts/save/${post._id}`);
       if (response.data.status === "Success") {
         toast.success(response.data.message);
-
-        const filterFn = (s) => (s?._id || s)?.toString() !== post._id?.toString();
-
-        // 1. Sync AuthContext
-        updateUser({
-          ...user,
-          savedPosts: wasSaved ? (user.savedPosts || []).filter(filterFn) : [...(user.savedPosts || []), post],
-        });
-
-        // 2. Sync ["user", "me"] — used by SavedPostsPage
-        queryClient.setQueryData(["user", "me"], (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            savedPosts: wasSaved ? (old.savedPosts || []).filter(filterFn) : [post, ...(old.savedPosts || [])],
-          };
-        });
-
-        // 3. Sync ["user", userId] — used by ProfilePage saved tab
-        queryClient.setQueryData(["user", user._id], (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            savedPosts: wasSaved ? (old.savedPosts || []).filter(filterFn) : [post, ...(old.savedPosts || [])],
-          };
-        });
+        // SocketContext handles the final authoritative cache update
       }
     } catch (error) {
-      setIsSaved(wasSaved);
+      updateCache(wasSaved); // Revert on failure
       toast.error("Failed to save post");
     }
   };
@@ -234,7 +226,9 @@ const Post = ({ post, onUpdate }) => {
       if (response.data.status === "Success") {
         toast.success(response.data.message || "Post deleted successfully");
 
-        queryClient.invalidateQueries(["posts", "feed"]);
+        // Force ProfilePage to refetch without relying on socket
+        queryClient.invalidateQueries(["posts", "user"]);
+
         if (onUpdate) {
           onUpdate();
         }

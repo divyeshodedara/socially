@@ -5,6 +5,7 @@ import getDataUri from "../utils/dataUri.js";
 import { createNotification } from "./notificationController.js";
 import redis from "../utils/redis.js";
 import { uploadToS3, deleteFromS3 } from "../utils/s3.js";
+import { sendFollowUpdateToUser } from "../utils/socket.js";
 
 const getProfile = catchAsync(async (req, res, next) => {
   const userId = req.params.id;
@@ -118,12 +119,20 @@ const followUser = catchAsync(async (req, res, next) => {
 
   await currentUser.save({ validateBeforeSave: false });
   await userToFollow.save({ validateBeforeSave: false });
+  await redis.del(`user:${currentUserId}`);
+  await redis.del(`user:${idToFollow}`);
 
   // Send follow notification
   await createNotification({
     recipient: idToFollow,
     sender: currentUserId,
     type: "follow",
+  });
+
+  // Notify User B of the new follower in real-time
+  sendFollowUpdateToUser(idToFollow, {
+    action: "follow",
+    followerId: currentUserId.toString(),
   });
 
   res.status(200).json({
@@ -160,6 +169,14 @@ const unfollowUser = catchAsync(async (req, res, next) => {
 
   await currentUser.save({ validateBeforeSave: false });
   await userToUnfollow.save({ validateBeforeSave: false });
+  await redis.del(`user:${currentUserId}`);
+  await redis.del(`user:${idToUnfollow}`);
+
+  // Notify User B of the unfollow in real-time
+  sendFollowUpdateToUser(idToUnfollow, {
+    action: "unfollow",
+    followerId: currentUserId.toString(),
+  });
 
   res.status(200).json({
     status: "success",

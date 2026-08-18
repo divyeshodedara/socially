@@ -40,9 +40,6 @@ const ProfilePage = () => {
     } else {
       follow(id);
     }
-
-    // refresh profile data
-    await queryClient.invalidateQueries(["user", id]);
   };
 
   const handleLogout = async () => {
