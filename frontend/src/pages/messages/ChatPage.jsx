@@ -152,7 +152,36 @@ const ChatPage = () => {
     onSuccess: (newMessageData) => {
       // Add the new message to the sender's chat cache directly
       queryClient.setQueryData(["messages", userId], (old = []) => [...old, newMessageData]);
-      // Conversations list is updated by the socket newMessage event (no HTTP refetch needed)
+
+      // The backend only emits the newMessage socket event to the RECEIVER, not the sender.
+      // So we manually update the sender's conversations list cache here to move
+      // this conversation to the top with the latest message.
+      queryClient.setQueryData(["conversations"], (old = []) => {
+        // Find the existing conversation for this chat partner
+        const existingConv = old.find((c) =>
+          c.participants?.some((p) => p?._id === userId)
+        );
+
+        if (existingConv) {
+          // Build an updated conversation with the new lastMessage
+          const updatedConv = {
+            ...existingConv,
+            lastMessage: {
+              ...newMessageData,
+              sender: { _id: currentUser._id, username: currentUser.username },
+              receiver: { _id: userId },
+              seen: false,
+            },
+          };
+          // Move it to the top
+          const filtered = old.filter((c) => c._id !== existingConv._id);
+          return [updatedConv, ...filtered];
+        }
+
+        // No existing conversation in cache yet — let a refetch handle it
+        return old;
+      });
+
       setNewMessage("");
       handleRemoveImage();
     },
